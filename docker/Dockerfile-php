@@ -1,0 +1,161 @@
+# Use the official PHP image with FPM
+FROM php:8.3-fpm-alpine
+
+# Set the working directory
+WORKDIR /var/www/html
+
+# Install system dependencies and PHP extensions
+# Install Additional dependencies
+RUN apk update && apk add --no-cache \
+    nano \
+    vim \
+    bash \
+    build-base shadow supervisor \
+    libxml2-dev \
+    libmcrypt-dev \
+    autoconf \
+    php83-common \
+    php83-pdo \
+    php83-pdo_pgsql \
+    php83-pecl-mcrypt \
+    php83-mbstring \
+    php83-xml \
+    php83-openssl \
+    php83-json \
+    libpng-dev \
+    jpeg-dev\
+    libjpeg-turbo-dev  \
+    libwebp-dev \
+    freetype-dev \
+    php83-phar \
+    php83-zip \
+    php83-gd \
+    php83-dom \
+    php83-session \
+    php83-zlib \
+    php83-soap \
+    libzip-dev  \
+    zip  \
+    unzip  \
+    postgresql-dev \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-configure intl \
+    && docker-php-ext-install -j$(nproc) \
+        gd \
+        zip \
+        intl
+
+# Add and Enable PHP-PDO Extenstions
+RUN pecl install mcrypt
+RUN docker-php-ext-enable mcrypt
+RUN docker-php-ext-install pdo pdo_pgsql
+RUN docker-php-ext-enable pdo_pgsql
+RUN docker-php-ext-install pcntl
+RUN docker-php-ext-install soap
+RUN docker-php-ext-install bcmath
+RUN docker-php-ext-install exif
+RUN docker-php-ext-enable exif
+RUN docker-php-ext-install opcache
+
+
+# Copy application files
+COPY . /var/www/html
+
+# Remove Cache
+RUN rm -rf /var/cache/apk/*
+
+# Install Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+# Add UID '1000' to www-data
+RUN usermod -u 1000 www-data
+
+# Copy the application files
+COPY . .
+
+# Copy the example environment file and set permissions
+RUN cp .env.example .env && \
+    chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
+
+# Install application dependencies
+RUN composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
+
+RUN php artisan cache:clear
+
+RUN composer dump-autoload
+
+# Install dependencies for building NGINX
+RUN apk add --no-cache \
+    curl \
+    gcc \
+    gd-dev \
+    geoip-dev \
+    libc-dev \
+    libxslt-dev \
+    linux-headers \
+    make \
+    pcre-dev \
+    zlib-dev \
+    openssl-dev \
+    bash \
+    supervisor
+
+# Set NGINX version
+ENV NGINX_VERSION 1.25.4
+
+# Download and compile NGINX
+RUN curl -L http://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz | tar zx \
+    && cd nginx-${NGINX_VERSION} \
+    && ./configure \
+        --prefix=/etc/nginx \
+        --sbin-path=/usr/sbin/nginx \
+        --conf-path=/etc/nginx/nginx.conf \
+        --error-log-path=/var/log/nginx/error.log \
+        --http-log-path=/var/log/nginx/access.log \
+        --pid-path=/var/run/nginx.pid \
+        --lock-path=/var/run/nginx.lock \
+        --with-http_ssl_module \
+        --with-http_realip_module \
+        --with-http_addition_module \
+        --with-http_sub_module \
+        --with-http_dav_module \
+        --with-http_flv_module \
+        --with-http_mp4_module \
+        --with-http_gunzip_module \
+        --with-http_gzip_static_module \
+        --with-http_random_index_module \
+        --with-http_secure_link_module \
+        --with-http_stub_status_module \
+        --with-http_auth_request_module \
+        --with-threads \
+        --with-stream \
+        --with-stream_ssl_module \
+        --with-stream_ssl_preread_module \
+        --with-stream_realip_module \
+        --with-http_slice_module \
+        --with-mail \
+        --with-mail_ssl_module \
+        --with-compat \
+        --with-file-aio \
+    && make \
+    && make install \
+    && cd .. \
+    && rm -rf nginx-${NGINX_VERSION}
+
+# Create the necessary directories
+RUN mkdir -p /run/nginx /var/log/supervisor
+
+# Copy Supervisor configuration file
+COPY ./docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Copy the entrypoint script
+COPY ./docker/docker-entrypoint.sh /usr/local/bin/
+
+# Make the entrypoint script executable
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Expose ports
+EXPOSE 80
+
+# Use the entrypoint script
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

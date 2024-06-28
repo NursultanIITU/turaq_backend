@@ -1,0 +1,10 @@
+FROM nginx:1.25.4-alpine
+
+# Create catalog for php
+RUN mkdir -p /var/www/html/
+
+# Copy public sources only
+COPY . /var/www/html
+
+# Expose port
+EXPOSE 80
